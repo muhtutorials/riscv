@@ -1,3 +1,5 @@
+use crate::inst::*;
+
 pub const MEM_SIZE: usize = 1024 * 128;
 
 #[derive(Clone)]
@@ -10,12 +12,12 @@ pub enum Size {
     Word = 4,
 }
 
-impl From<LoadInst> for Size {
-    fn from(value: LoadInst) -> Self {
+impl From<LoadIInst> for Size {
+    fn from(value: LoadIInst) -> Self {
         match value {
-            LoadInst::LB | LoadInst::LBU => Size::Byte,
-            LoadInst::LH | LoadInst::LHU => Size::HalfWord,
-            LoadInst::LW => Size::Word,
+            LoadIInst::LB | LoadIInst::LBU => Size::Byte,
+            LoadIInst::LH | LoadIInst::LHU => Size::HalfWord,
+            LoadIInst::LW => Size::Word,
         }
     }
 }
