@@ -1,9 +1,10 @@
-mod inst_format;
+mod cpu;
 mod error;
-mod regs;
+mod inst;
+mod inst_format;
 mod memory;
 mod pc;
-mod inst;
+mod regs;
 
 fn main() {
     println!("Hello, world!");

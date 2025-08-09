@@ -1,5 +1,6 @@
 use crate::inst::*;
 
+// RAM size
 pub const MEM_SIZE: usize = 1024 * 128;
 
 #[derive(Clone)]
@@ -34,6 +35,10 @@ impl From<SInst> for Size {
 
 macro_rules! read_mem {
     ($ty:ty, $mem:expr, $from:expr, $to:expr) => {
+        // Little-Endian (LE)
+        // 0x12345678 is stored as:
+        // Address: 0x1000 | 0x1001 | 0x1002 | 0x1003
+        // Data:    0x78   | 0x56   | 0x34   | 0x12
         <$ty>::from_le_bytes($mem[$from as usize..$to as usize].try_into().unwrap()) as u32
     };
 }
@@ -45,7 +50,7 @@ impl Memory {
         Memory([0; MEM_SIZE])
     }
 
-    pub fn read(&self, size: Size, from: u32, is_unsigned: bool) -> u32 {
+    pub fn read(&self, from: u32, size: Size, is_unsigned: bool) -> u32 {
         let to = from + size.clone() as u32;
         match (size, is_unsigned) {
             (Size::Byte, true) => read_mem!(u8, self.0, from, to),
@@ -56,7 +61,7 @@ impl Memory {
         }
     }
 
-    pub fn write(&mut self, size: Size, from: u32, val: u32) {
+    pub fn write(&mut self, from: u32, size: Size, val: u32) {
         let slice = val.to_le_bytes();
         let from = from as usize;
         let len = size as usize;

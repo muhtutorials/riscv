@@ -17,13 +17,13 @@ impl ProgramCounter {
     }
 
     // Increments the program counter and returns
-    // the pc before it was incremented (AKA i++).
+    // the PC before it was incremented (AKA i++).
     pub fn inc(&mut self) -> Result<u32, Error> {
         let pc = self.0;
         // All base instructions in RISC-V are 32 bits (4 bytes) long.
-        // The pc tracks byte addresses, so each sequential instruction is plus 4 bytes.
+        // The PC tracks byte addresses, so each sequential instruction is plus 4 bytes.
         self.0 += 4;
-        if pc > MEM_SIZE as u32 - 4 {
+        if self.0 > MEM_SIZE as u32 {
             return Err(Error::InvalidPC(pc, MEM_SIZE));
         }
         Ok(pc)

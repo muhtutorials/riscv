@@ -1,7 +1,9 @@
-use std::ops::{BitAnd, BitOr, BitXor};
+// https://projectf.io/posts/riscv-cheat-sheet/
+use crate::cpu::Cpu;
 use crate::get_bits;
 use crate::inst_format::*;
 use crate::memory::{Memory, Size};
+use std::ops::{BitAnd, BitOr, BitXor};
 
 pub enum Inst {
     // register-register operations
@@ -20,7 +22,7 @@ pub enum Inst {
     // This isn't an official instruction but just
     // so that the emulator doesn't crash on `ecall`.
     // Only handles exit for now, every other syscall is ignored.
-    SysCall(SysCall)
+    SysCall(SysCall),
 }
 
 pub enum SysCall {
@@ -131,7 +133,7 @@ impl From<ArithIInst> for RInst {
 }
 
 // the same as `RInst`, but instead of `rs2` `imm` is used.
-// `I` in the end stands for `immediate`.
+// `I` at the end of an instruction stands for `immediate`.
 pub enum ArithIInst {
     ADDI,
     XORI,
@@ -192,9 +194,11 @@ impl LoadIInst {
 
     fn op(self, mem: &Memory) -> impl FnOnce(u32, u32) -> u32 + '_ {
         move |rs1, imm| {
+            // TODO: why do we use an offset here?
             let from = u32::wrapping_add(rs1, imm);
             let is_unsigned = self.is_unsigned();
-            mem.read(Size::from(self), from, is_unsigned)
+            let size = Size::from(self);
+            mem.read(from, size, is_unsigned)
         }
     }
 }
@@ -205,6 +209,8 @@ pub enum IInst {
     // Jump And Link Register
     // Jumping to an address stored in a register (indirect jumps).
     // Saving the return address (for function calls/returns).
+    // jal  rd, imm       # rd = pc+4; pc += imm
+    // jalr rd, rs1, imm  # rd = pc+4; pc = rs1+imm
     Jalr,
 }
 
@@ -225,6 +231,9 @@ impl IInst {
     }
 }
 
+// sw  # mem[rs1+imm] = rs2             ; store word
+// sh  # mem[rs1+imm][0:15] = rs2[0:15] ; store half word
+// sb  # mem[rs1+imm][0:7] = rs2[0:7]   ; store byte
 pub enum SInst {
     // Store Byte
     SB,
@@ -238,18 +247,18 @@ impl SInst {
     fn op(self, mem: &mut Memory) -> impl FnOnce(u32, u32, u32) + '_ {
         move |rs1, rs2, imm| {
             let from = u32::wrapping_add(rs1, imm);
-            mem.write(Size::from(self), from, rs2)
+            let size = Size::from(self);
+            mem.write(from, size, rs2)
         }
     }
 }
-
 
 // Branch Instructions:
 // Inst  Full Name	                            Condition (Jump if...)  Type
 // BEQ	 Branch if Equal	                    rs1 == rs2	            Signed
 // BNE	 Branch if Not Equal	                rs1 != rs2	            Signed
-// BLT	 Branch if Less Than	                rs1 <= rs2 (signed)	    Signed
-// BLTU	 Branch if Less Than (Unsigned)	        rs1 <= rs2 (unsigned)	Unsigned
+// BLT	 Branch if Less Than	                rs1 < rs2 (signed)	    Signed
+// BLTU	 Branch if Less Than (Unsigned)	        rs1 < rs2 (unsigned)	Unsigned
 // BGE	 Branch if Greater or Equal	            rs1 >= rs2 (signed)	    Signed
 // BGEU	 Branch if Greater or Equal (Unsigned)  rs1 >= rs2 (unsigned)   Unsigned
 pub enum BInst {
@@ -278,6 +287,7 @@ pub enum UInst {
 
 impl UInst {
     fn op(self, pc: u32) -> impl FnOnce(u32) -> u32 {
+        // TODO: what does it do?
         move |imm| match self {
             UInst::LUI => imm << 12,
             UInst::AUIPC => u32::wrapping_add(pc - 4, imm << 12),
@@ -289,9 +299,11 @@ impl Inst {
     pub fn execute(self, cpu: &mut Cpu) {
         match self {
             Inst::R(inst, format) => {
+                let rs1 = cpu.regs.read(format.rs1);
+                let rs2 = cpu.regs.read(format.rs2);
                 // Arithmetic Logic Unit (ALU)
                 let alu = inst.op();
-                let result = alu(cpu.regs.read(format.rs1), cpu.regs.read(format.rs2));
+                let result = alu(rs1, rs2);
                 cpu.regs.write(format.rd, result)
             }
             Inst::I(inst, format) => {
@@ -312,15 +324,22 @@ impl Inst {
                 let branch = match inst {
                     BInst::BEQ => rs1 == rs2,
                     BInst::BNE => rs1 != rs2,
-                    BInst::BLT => rs1 as i32 <= rs2 as i32,
-                    BInst::BLTU => rs1 <= rs2,
+                    BInst::BLT => (rs1 as i32) < (rs2 as i32),
+                    BInst::BLTU => rs1 < rs2,
                     BInst::BGE => rs1 as i32 >= rs2 as i32,
                     BInst::BGEU => rs1 >= rs2,
                 };
+                // TODO: what does it do?
                 if branch {
+                    // The immediate value in a jump instruction
+                    // is typically encoded as an offset relative
+                    // to the current instruction's address (not the next one).
+                    // Since the CPU has already incremented the PC by 4,
+                    // you need to compensate by subtracting 4 to make the offset correct:
+                    // jump = (current_pc + 4) + (offset - 4) = current_pc + offset
                     cpu.pc.set(u32::wrapping_add(
                         cpu.pc.get(),
-                        u32::wrapping_sub(format.imm, 4)
+                        u32::wrapping_sub(format.imm, 4),
                     ));
                 }
             }
@@ -328,7 +347,7 @@ impl Inst {
                 cpu.regs.write(format.rd, cpu.pc.get());
                 cpu.pc.set(u32::wrapping_add(
                     cpu.pc.get(),
-                    u32::wrapping_sub(format.imm, 4)
+                    u32::wrapping_sub(format.imm, 4),
                 ));
             }
             Inst::U(inst, format) => {
@@ -336,7 +355,100 @@ impl Inst {
                 let result = alu(format.imm);
                 cpu.regs.write(format.rd, result);
             }
-            Inst::SysCall(..) => {},
+            Inst::SysCall(..) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_byte() {
+        let mut cpu = Cpu::new(false);
+        cpu.regs.write(28, 12);
+        // li t0, 42     # load the immediate 42 into register t0
+        // li t6, 0x140  # load the immediate 0x140 (address) into register t6
+        // sw t0, 0(t6)  # store the word in t0 to memory address in t6 with 0 byte offset
+        // mem[0 + 3] = 12[0:7]
+        let inst = Inst::S(
+            SInst::SB,
+            SFormat {
+                funct3: 0x0,
+                rs1: 0,
+                rs2: 28,
+                imm: 3,
+            }
+        );
+        inst.execute(&mut cpu);
+        assert_eq!(cpu.mem.read(3, Size::Byte, true), 12)
+    }
+
+    #[test]
+    fn lui() {
+        let mut cpu = Cpu::new(false);
+
+        let inst = Inst::U(UInst::LUI, UFormat { rd: 10, imm: 1 });
+        inst.execute(&mut cpu);
+        assert_eq!(cpu.regs.read(10), 4096);
+
+        let inst = Inst::U(UInst::LUI, UFormat { rd: 10, imm: 3 });
+        inst.execute(&mut cpu);
+        assert_eq!(cpu.regs.read(10), 12288);
+
+        let inst = Inst::U(UInst::LUI, UFormat { rd: 10, imm: 0x100 });
+        inst.execute(&mut cpu);
+        assert_eq!(cpu.regs.read(10), 1048576);
+    }
+
+    #[test]
+    fn lui_max() {
+        let mut cpu = Cpu::new(false);
+        let inst = Inst::U(UInst::LUI, UFormat {
+            rd: 10,
+            imm: 0b1111_1111_1111_1111,
+        });
+        inst.execute(&mut cpu);
+        assert_eq!(cpu.regs.read(10), 0b1111_1111_1111_1111_0000_0000_0000);
+    }
+
+    #[test]
+    fn long_jump() {
+        // manually test big addresses, since emulator has little memory
+        // auipc x5, 0x03000
+        // jalr x10, x5, -0x400
+        let mut cpu = Cpu::new(false);
+        // set pc to 0x40000004
+        cpu.pc.set(0x40000004);
+        let auipc_inst = Inst::U(UInst::AUIPC, UFormat {
+            rd: 5,
+            imm: 0x3000,
+        });
+        // rd = pc - 4 + imm << 12
+        // 0x40000004 - 4 + 0x3000000
+        // 0x40000000 + 0x3000000
+        // 0x43000000
+        auipc_inst.execute(&mut cpu);
+        assert_eq!(cpu.regs.read(5), 0x43000000);
+
+        // manually increment PC since no fetching here
+        // pc = 0x40000004 + 4
+        cpu.pc.set(cpu.pc.get() + 4);
+
+        // jalr rd, rs1, imm  # rd = pc+4; pc = rs1+imm
+        // rd = 0x40000008; pc = 0x43000000 + (-0x400i32)
+        let jarl_inst = Inst::I(
+            IInst::Jalr,
+            IFormat {
+                rd: 10,
+                funct3: 0,
+                rs1: 5,
+                imm: -0x400i32 as u32
+            }
+        );
+        jarl_inst.execute(&mut cpu);
+        assert_eq!(cpu.regs.read(10), 0x40000008);
+        assert_eq!(cpu.pc.get(), 0x42fffc00);
     }
 }

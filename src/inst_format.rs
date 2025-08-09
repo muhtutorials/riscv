@@ -154,7 +154,7 @@ impl SFormat {
 // funct3, a 12-bit immediate value (offset), a source
 // register (rs1), and a second source register (rs2).
 //
-// 31    30 29    25 24    20 19    15 14     12 11      8 7     6 5      0
+// 31    31 30    25 24    20 19    15 14     12 11      8 7     7 6      0
 // +-------+--------+--------+--------+---------+---------+-------+-------+
 // |imm[12]|imm[10:5]|  rs2  |   rs1  |  funct3 |imm[4:1] |imm[11]| opcode|
 // +-------+--------+--------+--------+---------+---------+-------+-------+
@@ -185,6 +185,12 @@ impl BFormat {
     // stay in fixed positions, while the lowest bit in
     // S format (inst[7]) encodes a high-order bit in B format.
     pub fn new(raw_inst: u32) -> Self {
+        // Bit Position	 Field	    Description
+        // 31	         imm[12]	Sign bit (MSB of the offset)
+        // 7	         imm[11]	Part of the offset
+        // 30:25	     imm[10:5]  Middle bits of the offset
+        // 11:8	         imm[4:1]	Lower bits of the offset
+        // (implied)     imm[0]	    Always 0 (branches are 2-byte aligned)
         let imm_11th_bit = get_bits!(raw_inst, 7, 7, i32);
         let imm_lo = get_bits!(raw_inst, 8, 11, i32);
         let imm_hi = get_bits!(raw_inst, 25, 30, i32);
@@ -201,6 +207,7 @@ impl BFormat {
     }
 }
 
+// TODO: why is immediate split into parts?
 // J-type (Jump):
 // Used for unconditional jump instructions.
 // It includes opcode, a 20-bit immediate value
@@ -228,6 +235,7 @@ impl JFormat {
         let imm_11th_bit = get_bits!(raw_inst, 20, 20, i32);
         let imm_lo = get_bits!(raw_inst, 21, 30, i32);
         let imm_20th_bit = get_bits!(raw_inst, 31, 31, i32);
+        // TODO: why do we leave "0" at the beginning of immediate?
         let imm = (
             (imm_20th_bit << 20) | (imm_hi << 12) | (imm_11th_bit << 11) | (imm_lo << 1)
         ) as u32;
@@ -261,5 +269,39 @@ impl UFormat {
             rd: get_bits!(raw_inst, 7, 11),
             imm: get_bits!(raw_inst, 12, 31, i32) as u32,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_bits_usize() {
+        let n: usize = 0b1110_1101;
+        assert_eq!(0b1101, get_bits!(n, 0, 3));
+        assert_eq!(0b110, get_bits!(n, 4, 6));
+    }
+
+    #[test]
+    fn get_bits_sign_extended() {
+        let n: usize = 0b1111_1000_0001_0000_0000_1111_1001_0011;
+        // -127 = 0b10000001
+        assert_eq!(-127, get_bits!(n, 20, 31, i32));
+        assert_eq!(0b0011, get_bits!(n, 10, 13, i32));
+    }
+
+    #[test]
+    fn parse_cond_branch_imm() {
+        // bge x0, x0, -12
+        assert_eq!(
+            // imm[12|10:5] imm[4:1|11]
+            //      31:25        11:7
+            //      1|111111   1010|1
+            //      1 1 111111 1010 0
+            //
+            BFormat::new(0b1111_1110_0000_0000_0101_1010_1110_0011).imm as i32,
+            -12
+        )
     }
 }
